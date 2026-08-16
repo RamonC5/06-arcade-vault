@@ -23,4 +23,3 @@ npm run build    # production build
 npm run start    # serve production build
 npm run lint     # ESLint (Next.js config)
 ```
-"# 06-arcade-vault" 
