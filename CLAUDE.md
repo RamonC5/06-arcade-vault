@@ -36,6 +36,7 @@ Specs live in `specs/NN-slug.md`, numbered sequentially, each with a header stat
 ### Agents
 
 - **`game-planner`** (`.claude/agents/game-planner.md`) — decides **which game to build next**. Diagnoses the catalog (category balance, free `.cover-*` classes, mechanics already covered), then returns 3 ranked candidates with an argued #1. Keeps a persistent ledger of everything ever proposed in `references/game-suggestions-todo.md` so it never repeats an idea across sessions. Reads only repo files — no MCP, no web. It **never writes code or specs**; the ledger is the only file it touches.
+- **`game-jam`** (`.claude/agents/game-jam.md`) — a parallel, exploratory flow: given a **theme or game idea supplied directly by the user** (not "what's next"), it generates **two complete, ready-to-review specs** with mechanically distinct games that both fit the request, in `specs/game-jam/NN-<theme-slug>/` (`01-<id>-game.md`, `02-<id>-game.md`, plus a `README.md` comparing the two). Both specs start in `Borrador`. It deliberately does **not** read `game-suggestions-todo.md` or `implemented-games.md` and does no duplicate/collision checking — the user owns that judgment. It **never writes code**; a chosen variant must be copied/renumbered into flat `specs/` before `/spec-impl` can run on it (that skill doesn't recurse into subfolders).
 
 The full cycle for adding a game:
 
