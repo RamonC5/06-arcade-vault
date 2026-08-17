@@ -33,6 +33,17 @@ Specs live in `specs/NN-slug.md`, numbered sequentially, each with a header stat
 - **`/add-game`** — project-local skill (`.claude/skills/add-game/`) that generates the spec for a new canvas game: React component, play page, `games` row INSERT and leaderboard wiring. Accepts a folder under `references/started-games/` or a free-form description. It **never writes code** — only `specs/NN-<slug>-game.md`, to be executed later with `/spec-impl`.
 - **`/frontend-design`** — usa siempre este skill para diseñar la interfaz de usuario.
 
+### Agents
+
+- **`game-planner`** (`.claude/agents/game-planner.md`) — decides **which game to build next**. Diagnoses the catalog (category balance, free `.cover-*` classes, mechanics already covered), then returns 3 ranked candidates with an argued #1. Keeps a persistent ledger of everything ever proposed in `references/game-suggestions-todo.md` so it never repeats an idea across sessions. Reads only repo files — no MCP, no web. It **never writes code or specs**; the ledger is the only file it touches.
+
+The full cycle for adding a game:
+
+```
+game-planner   →   /add-game   →   /spec-impl NN
+ (which game)      (the spec)      (the code)
+```
+
 ### Automation
 
 - **Hook** — `.claude/settings.json` registers a `PostToolUse` hook on `Write|Edit|MultiEdit` that runs `.claude/hooks/format-and-lint.sh`: strips trailing whitespace, runs `prettier --write`, then `eslint --fix` on JS/TS files. Don't hand-format edited files; the hook does it.
@@ -92,6 +103,8 @@ Conventions to preserve when adding one:
 
 `references/started-games/` holds the original standalone HTML/JS versions used as the source for ports, and `references/source-assets/` the sprite sheets; runtime assets are copied into `public/`. `references/templates/` keeps the original design prototypes.
 
+Two hand-maintained ledgers live in `references/`: `implemented-games.md` (what is built and live in `games`) and `game-suggestions-todo.md` (the `game-planner` agent's memory — every game ever proposed, with its state and the reasoning of each round). Keep `implemented-games.md` in sync when a game ships.
+
 ### Auth
 
 Authentication is **mocked**, not Supabase Auth: `UserContext` stores a display name in `localStorage` under `av_user`, and `/auth` just calls `login()`. `scores.user_id` is always inserted as `null`. Treat any real auth work as a new spec.
@@ -99,3 +112,5 @@ Authentication is **mocked**, not Supabase Auth: `UserContext` stores a display 
 ### Styling
 
 `app/globals.css` defines the retro-arcade design system: CSS variables (`--bg`, `--ink`, `--cyan`, `--magenta`, `--yellow`, `--green`, `--gold`, `--line`, …), the `--pixel` (Press Start 2P) and `--mono` (JetBrains Mono) font stacks, component classes (`.btn`, `.crt`, `.leaderboard`, `.modal`, `.hud-stat`, `.fade-in`) and one `.cover-*` class per game cover art. Reuse existing classes and tokens rather than introducing ad-hoc Tailwind utilities or hardcoded colors.
+
+Not every `.cover-*` is assigned: `cover-invaders`, `cover-glot`, `cover-rana` and `cover-duelo` are drawn but unused, so a new game that fits one of them needs no new cover art. `game-planner` weighs this when ranking candidates.
