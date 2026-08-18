@@ -1,4 +1,14 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(node rubric2.js)",
+      "Bash(npx eslint *)",
+      "Bash(npx next *)",
+      "Bash(npm run *)",
+      "Bash(grep -E \"play\\\\\\\\\\\\\\\\page.tsx$|Avoid calling setState\")",
+      "Bash(grep -E \"^C:.*\\(games|components\\).*\\\\.tsx$\")"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {

@@ -1,17 +1,112 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { hexToRgba } from '@/lib/skins';
 
 interface AsteroidsGameProps {
   paused: boolean;
+  skinKey?: string;
   onScoreChange: (score: number) => void;
   onLivesChange: (lives: number) => void;
   onLevelChange: (level: number) => void;
   onGameOver: (finalScore: number) => void;
 }
 
+/**
+ * A skin is palette *and* drawing technique: `glow` drives `shadowBlur`, the
+ * `*FillAlpha` fields turn the pure wireframes into filled neon silhouettes.
+ * Everything the canvas paints — including its own HUD — comes from here; no
+ * color literal is left in the draw code.
+ */
+type Skin = {
+  name: string;
+  /** Canvas background. Never lighter than the site's `--bg: #0a0a0f`. */
+  bg: string;
+  ship: string;
+  shipFillAlpha: number;
+  thrust: string;
+  thrustAlpha: number;
+  bullet: string;
+  asteroid: string;
+  asteroidFillAlpha: number;
+  particle: string;
+  hudScore: string;
+  hudLevel: string;
+  lifeIcon: string;
+  /** Stroke width for ship + asteroid wireframes. */
+  lineWidth: number;
+  hudFont: string;
+  /** `shadowBlur` in px; 0 disables the glow entirely. */
+  glow: number;
+};
+
+const SKINS: Record<string, Skin> = {
+  // Literal freeze of the original palette: white vectors on pure black with an
+  // orange thruster. If anything looks different here, it is a bug.
+  clasico: {
+    name: 'Clásico',
+    bg: '#000000',
+    ship: '#ffffff',
+    shipFillAlpha: 0,
+    thrust: '#ff8200',
+    thrustAlpha: 0.85,
+    bullet: '#ffffff',
+    asteroid: '#ffffff',
+    asteroidFillAlpha: 0,
+    particle: '#ffffff',
+    hudScore: '#ffffff',
+    hudLevel: '#ffffff',
+    lifeIcon: '#ffffff',
+    lineWidth: 1.5,
+    hudFont: '15px monospace',
+    glow: 0,
+  },
+  // Amber phosphor tube: short warm gamut, hard edges, no glow. The ship is the
+  // brightest thing on screen and the rocks sit two luminance steps below it.
+  retro: {
+    name: 'Retro',
+    bg: '#070604',
+    ship: '#ffd27f',
+    shipFillAlpha: 0,
+    thrust: '#ff7a1a',
+    thrustAlpha: 0.9,
+    bullet: '#fff8e2',
+    asteroid: '#9c8550',
+    asteroidFillAlpha: 0,
+    particle: '#7a6640',
+    hudScore: '#e8b455',
+    hudLevel: '#7fd06a',
+    lifeIcon: '#ffd27f',
+    lineWidth: 2,
+    hudFont: 'bold 15px monospace',
+    glow: 0,
+  },
+  // Arcade Vault identity: the four house tokens, one per entity, so hues stay
+  // maximally apart. Glow is decoration — every base color passes the rubric
+  // with `shadowBlur` off.
+  neon: {
+    name: 'Neon',
+    bg: '#05050a',
+    ship: '#00f5ff',
+    shipFillAlpha: 0.18,
+    thrust: '#00ff88',
+    thrustAlpha: 0.9,
+    bullet: '#f5ff00',
+    asteroid: '#ff006e',
+    asteroidFillAlpha: 0.14,
+    particle: '#00ff88',
+    hudScore: '#00f5ff',
+    hudLevel: '#f5ff00',
+    lifeIcon: '#00f5ff',
+    lineWidth: 1.5,
+    hudFont: '15px monospace',
+    glow: 12,
+  },
+};
+
 export default function AsteroidsGame({
   paused,
+  skinKey = 'clasico',
   onScoreChange,
   onLivesChange,
   onLevelChange,
@@ -21,6 +116,7 @@ export default function AsteroidsGame({
 
   // Refs so the game loop always reads the latest prop values without re-running the effect
   const pausedRef = useRef(paused);
+  const skinRef = useRef<Skin>(SKINS[skinKey] ?? SKINS.clasico);
   const cbScore = useRef(onScoreChange);
   const cbLives = useRef(onLivesChange);
   const cbLevel = useRef(onLevelChange);
@@ -29,6 +125,11 @@ export default function AsteroidsGame({
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+  // Swapping the skin only repoints a ref: the game loop effect never re-runs,
+  // so the run, the score and the asteroid field all survive the change.
+  useEffect(() => {
+    skinRef.current = SKINS[skinKey] ?? SKINS.clasico;
+  }, [skinKey]);
   useEffect(() => {
     cbScore.current = onScoreChange;
   }, [onScoreChange]);
@@ -47,6 +148,10 @@ export default function AsteroidsGame({
     const ctx = canvas.getContext('2d')!;
     const W = 800;
     const H = 600;
+
+    // Active skin, refreshed once per frame at the top of draw(). Every draw
+    // method below shares this closure just like it shares `ctx`.
+    let skin: Skin = skinRef.current;
 
     // ── Input ────────────────────────────────────────────────────────────────
     const keys: Record<string, boolean> = {};
@@ -110,10 +215,16 @@ export default function AsteroidsGame({
         if (this.ttl <= 0) this.dead = true;
       }
       draw() {
-        ctx.fillStyle = '#fff';
+        ctx.save();
+        ctx.fillStyle = skin.bullet;
+        if (skin.glow) {
+          ctx.shadowBlur = skin.glow;
+          ctx.shadowColor = skin.bullet;
+        }
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
       }
     }
 
@@ -169,14 +280,22 @@ export default function AsteroidsGame({
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.rotate(this.rot);
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = skin.asteroid;
+        ctx.lineWidth = skin.lineWidth;
         ctx.lineJoin = 'round';
+        if (skin.glow) {
+          ctx.shadowBlur = skin.glow;
+          ctx.shadowColor = skin.asteroid;
+        }
         ctx.beginPath();
         ctx.moveTo(this.verts[0][0], this.verts[0][1]);
         for (let i = 1; i < this.verts.length; i++)
           ctx.lineTo(this.verts[i][0], this.verts[i][1]);
         ctx.closePath();
+        if (skin.asteroidFillAlpha > 0) {
+          ctx.fillStyle = hexToRgba(skin.asteroid, skin.asteroidFillAlpha);
+          ctx.fill();
+        }
         ctx.stroke();
         ctx.restore();
       }
@@ -243,22 +362,31 @@ export default function AsteroidsGame({
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = skin.ship;
+        ctx.lineWidth = skin.lineWidth;
         ctx.lineJoin = 'round';
+        if (skin.glow) {
+          ctx.shadowBlur = skin.glow;
+          ctx.shadowColor = skin.ship;
+        }
         ctx.beginPath();
         ctx.moveTo(20, 0);
         ctx.lineTo(-12, -9);
         ctx.lineTo(-7, 0);
         ctx.lineTo(-12, 9);
         ctx.closePath();
+        if (skin.shipFillAlpha > 0) {
+          ctx.fillStyle = hexToRgba(skin.ship, skin.shipFillAlpha);
+          ctx.fill();
+        }
         ctx.stroke();
         if (this.thrusting && Math.random() > 0.35) {
           ctx.beginPath();
           ctx.moveTo(-8, -4);
           ctx.lineTo(-8 - rand(6, 14), 0);
           ctx.lineTo(-8, 4);
-          ctx.strokeStyle = 'rgba(255, 130, 0, 0.85)';
+          ctx.strokeStyle = hexToRgba(skin.thrust, skin.thrustAlpha);
+          if (skin.glow) ctx.shadowColor = skin.thrust;
           ctx.stroke();
         }
         ctx.restore();
@@ -293,7 +421,7 @@ export default function AsteroidsGame({
       }
       draw() {
         const alpha = this.ttl / this.life;
-        ctx.strokeStyle = `rgba(255,255,255,${alpha.toFixed(2)})`;
+        ctx.strokeStyle = hexToRgba(skin.particle, Number(alpha.toFixed(2)));
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(this.x, this.y);
@@ -431,8 +559,12 @@ export default function AsteroidsGame({
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(-Math.PI / 2);
-      ctx.strokeStyle = '#fff';
+      ctx.strokeStyle = skin.lifeIcon;
       ctx.lineWidth = 1.2;
+      if (skin.glow) {
+        ctx.shadowBlur = skin.glow * 0.5;
+        ctx.shadowColor = skin.lifeIcon;
+      }
       ctx.lineJoin = 'round';
       ctx.beginPath();
       ctx.moveTo(9, 0);
@@ -445,17 +577,26 @@ export default function AsteroidsGame({
     }
 
     function drawHUD() {
-      ctx.fillStyle = '#fff';
-      ctx.font = '15px monospace';
+      ctx.save();
+      ctx.font = skin.hudFont;
+      if (skin.glow) ctx.shadowBlur = skin.glow * 0.6;
+      ctx.fillStyle = skin.hudScore;
+      ctx.shadowColor = skin.hudScore;
       ctx.textAlign = 'left';
       ctx.fillText(`SCORE  ${score}`, 14, 26);
+      ctx.fillStyle = skin.hudLevel;
+      ctx.shadowColor = skin.hudLevel;
       ctx.textAlign = 'center';
       ctx.fillText(`NIVEL ${level}`, W / 2, 26);
+      ctx.restore();
       for (let i = 0; i < lives; i++) drawLifeIcon(W - 16 - i * 22, 18);
     }
 
     function draw() {
-      ctx.fillStyle = '#000';
+      // One read per frame: picks up a skin change on the very next frame
+      // without touching game state.
+      skin = skinRef.current;
+      ctx.fillStyle = skin.bg;
       ctx.fillRect(0, 0, W, H);
       particles.forEach((p) => p.draw());
       asteroids.forEach((a) => a.draw());
