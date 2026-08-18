@@ -4,10 +4,15 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useState, useCallback, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import SkinPicker from '@/components/SkinPicker';
+import { getSavedSkin, saveSkin } from '@/lib/skins';
 
 const ArkanoidGame = dynamic(() => import('@/components/games/ArkanoidGame'), {
   ssr: false,
 });
+
+const GAME_ID = 'arkanoid';
+const SKIN_OPTIONS = ['clasico', 'retro', 'neon'];
 
 export default function ArkanoidPlay() {
   const [score, setScore] = useState(0);
@@ -18,6 +23,13 @@ export default function ArkanoidPlay() {
   const [name, setName] = useState('INVITADO');
   const [saved, setSaved] = useState(false);
   const [gameKey, setGameKey] = useState(0);
+  const [skinKey, setSkinKey] = useState('clasico');
+
+  // Read the stored skin after mount, never in the useState initializer, so the
+  // first client render matches the server HTML.
+  useEffect(() => {
+    setSkinKey(getSavedSkin(GAME_ID));
+  }, []);
 
   const handleScoreChange = useCallback((s: number) => setScore(s), []);
   const handleLivesChange = useCallback((l: number) => setLives(l), []);
@@ -33,6 +45,11 @@ export default function ArkanoidPlay() {
       if (saved) setName(saved);
     }
   }, [over]);
+
+  function changeSkin(key: string) {
+    setSkinKey(key);
+    saveSkin(GAME_ID, key);
+  }
 
   function restart() {
     setScore(0);
@@ -69,6 +86,11 @@ export default function ArkanoidPlay() {
             <div className="l">Nivel</div>
             <div className="v">{String(level).padStart(2, '0')}</div>
           </div>
+          <SkinPicker
+            value={skinKey}
+            options={SKIN_OPTIONS}
+            onChange={changeSkin}
+          />
         </div>
         <div className="hud-actions">
           <button className="btn yellow" onClick={() => setPaused((p) => !p)}>
@@ -88,6 +110,7 @@ export default function ArkanoidPlay() {
           <ArkanoidGame
             key={gameKey}
             paused={paused}
+            skinKey={skinKey}
             onScoreChange={handleScoreChange}
             onLivesChange={handleLivesChange}
             onLevelChange={handleLevelChange}

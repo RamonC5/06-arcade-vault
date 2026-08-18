@@ -4,11 +4,136 @@ import { useEffect, useRef } from 'react';
 
 interface ArkanoidGameProps {
   paused: boolean;
+  skinKey?: string;
   onScoreChange: (score: number) => void;
   onLivesChange: (lives: number) => void;
   onLevelChange: (level: number) => void;
   onGameOver: (finalScore: number) => void;
 }
+
+// ── Skins ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Arkanoid draws almost everything from `/spritesheet-breakout.png`, so a skin
+ * here is a *recoloring* of that sheet plus a drawing technique. Each tile is
+ * re-tinted once into its own offscreen canvas with `source-in`, which keeps the
+ * sprite silhouette and replaces every pixel with the skin color — flat, and
+ * with an exactly predictable contrast ratio. No new PNG is ever added.
+ */
+type SpriteTint = {
+  /** One color per `BLOCK_SPRITES` key; it also tints that key's explosion. */
+  blocks: Record<string, string>;
+  ball: string;
+  paddle: string;
+};
+
+type Skin = {
+  /** Registry key. Namespaces the tinted-tile cache. */
+  id: string;
+  name: string;
+  /** Canvas background. Never lighter than the site's `--bg: #0a0a0f`. */
+  bg: string;
+  /**
+   * `null` blits the spritesheet untouched — that is exactly what `clasico`
+   * does, which is why it is a pixel-for-pixel freeze of the original look.
+   */
+  tint: SpriteTint | null;
+  /** Pixels shaved off every block edge so a row does not read as a solid bar. */
+  blockInset: number;
+  /** `globalAlpha` of the block body; the stroke below is always full alpha. */
+  blockFillAlpha: number;
+  /** Bright outline around each block — the neon-tube look. */
+  blockStroke: boolean;
+  blockLineWidth: number;
+  /** `shadowBlur` in px; 0 disables the glow entirely. */
+  glow: number;
+  hudScore: string;
+  hudLevel: string;
+  hudFont: string;
+};
+
+const SKINS: Record<string, Skin> = {
+  // Literal freeze of the original: untouched spritesheet on pure black with a
+  // white HUD. `tint: null` + zero inset + no stroke + no glow means the draw
+  // calls are byte-for-byte the ones this game already emitted. If anything
+  // looks different here, it is a bug.
+  clasico: {
+    id: 'clasico',
+    name: 'Clásico',
+    bg: '#000000',
+    tint: null,
+    blockInset: 0,
+    blockFillAlpha: 1,
+    blockStroke: false,
+    blockLineWidth: 0,
+    glow: 0,
+    hudScore: '#ffffff',
+    hudLevel: '#ffffff',
+    hudFont: 'bold 18px monospace',
+  },
+  // Amber phosphor tube: short warm gamut, hard flat edges, no glow. The seven
+  // block keys are spread along a luminance ladder (magenta dimmest, yellow
+  // brightest) with two phosphor-green steps breaking up the amber run, so rows
+  // stay apart even though the gamut is deliberately narrow. A 1px inset draws
+  // the groove that the flat tint erases.
+  retro: {
+    id: 'retro',
+    name: 'Retro',
+    bg: '#070604',
+    tint: {
+      blocks: {
+        gray: '#969084',
+        red: '#d9762a',
+        yellow: '#f5d070',
+        cyan: '#aad46e',
+        magenta: '#a86a34',
+        hotpink: '#e8a04a',
+        green: '#7fb04a',
+      },
+      ball: '#fffdf2',
+      paddle: '#ffc46a',
+    },
+    blockInset: 1,
+    blockFillAlpha: 1,
+    blockStroke: false,
+    blockLineWidth: 0,
+    glow: 0,
+    hudScore: '#e8b455',
+    hudLevel: '#8fd06a',
+    hudFont: 'bold 18px monospace',
+  },
+  // Arcade Vault identity: the house tokens (`--cyan`, `--magenta`, `--yellow`,
+  // `--green`) plus three derived hues so all seven block keys stay far apart on
+  // the wheel. Technique is Tetris': translucent body + full-alpha bright stroke
+  // + `shadowBlur`. The glow is decoration — every base color passes the rubric
+  // with it switched off.
+  neon: {
+    id: 'neon',
+    name: 'Neon',
+    bg: '#05050a',
+    tint: {
+      blocks: {
+        gray: '#98a0b0',
+        red: '#ff006e',
+        yellow: '#f5ff00',
+        cyan: '#00f5ff',
+        magenta: '#a95cff',
+        hotpink: '#ff8a00',
+        green: '#00c46a',
+      },
+      ball: '#ffffff',
+      paddle: '#00f5ff',
+    },
+    blockInset: 2,
+    blockFillAlpha: 0.75,
+    blockStroke: true,
+    blockLineWidth: 1.5,
+    glow: 12,
+    hudScore: '#00f5ff',
+    hudLevel: '#00ff88',
+    hudFont: 'bold 18px monospace',
+  },
+};
 
 // ── Spritesheet data ──────────────────────────────────────────────────────────
 
@@ -177,6 +302,7 @@ type Explosion = {
 
 export default function ArkanoidGame({
   paused,
+  skinKey = 'clasico',
   onScoreChange,
   onLivesChange,
   onLevelChange,
@@ -184,44 +310,166 @@ export default function ArkanoidGame({
 }: ArkanoidGameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pausedRef = useRef(paused);
+  const skinRef = useRef<Skin>(SKINS[skinKey] ?? SKINS.clasico);
 
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+
+  // Swapping the skin only repoints a ref. The game-loop effect below never
+  // re-runs on a skin change, so the run, the score, the lives and the block
+  // layout all survive it.
+  useEffect(() => {
+    skinRef.current = SKINS[skinKey] ?? SKINS.clasico;
+  }, [skinKey]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
 
+    // Active skin, refreshed once per frame at the top of draw(). Every drawing
+    // helper below shares this closure just like it shares `ctx`.
+    let skin: Skin = skinRef.current;
+
     // ── Spritesheet ──────────────────────────────────────────────────────────
     let ssImg: HTMLCanvasElement | null = null;
     let ssLoaded = false;
 
-    function drawFrame(
+    /**
+     * Tinted copies of the sheet tiles, keyed by `skin id + tile`. A tile is
+     * recolored once, on first use, and reused every frame after that.
+     */
+    const tintCache = new Map<string, HTMLCanvasElement>();
+
+    function tintedTile(
+      src: HTMLCanvasElement,
+      cacheKey: string,
+      frame: { sx: number; sy: number; sw: number; sh: number },
+      color: string,
+    ) {
+      const cached = tintCache.get(cacheKey);
+      if (cached) return cached;
+      const tile = document.createElement('canvas');
+      tile.width = frame.sw;
+      tile.height = frame.sh;
+      const tctx = tile.getContext('2d')!;
+      tctx.drawImage(
+        src,
+        frame.sx,
+        frame.sy,
+        frame.sw,
+        frame.sh,
+        0,
+        0,
+        frame.sw,
+        frame.sh,
+      );
+      // `source-in` keeps the alpha silhouette and repaints every opaque pixel
+      // with the skin color.
+      tctx.globalCompositeOperation = 'source-in';
+      tctx.fillStyle = color;
+      tctx.fillRect(0, 0, frame.sw, frame.sh);
+      tintCache.set(cacheKey, tile);
+      return tile;
+    }
+
+    /** Blits a sheet tile, raw when the skin has no tint (that is `clasico`). */
+    function blit(
       frame: { sx: number; sy: number; sw: number; sh: number },
       x: number,
       y: number,
       w: number,
       h: number,
+      color: string | null,
+      cacheKey: string,
     ) {
       if (!ssLoaded || !ssImg) return;
-      ctx.drawImage(ssImg, frame.sx, frame.sy, frame.sw, frame.sh, x, y, w, h);
+      if (!color) {
+        ctx.drawImage(
+          ssImg,
+          frame.sx,
+          frame.sy,
+          frame.sw,
+          frame.sh,
+          x,
+          y,
+          w,
+          h,
+        );
+        return;
+      }
+      const tile = tintedTile(ssImg, cacheKey, frame, color);
+      ctx.drawImage(tile, 0, 0, frame.sw, frame.sh, x, y, w, h);
     }
 
     function drawSprite(
-      name: string,
+      name: 'ball' | 'paddle',
       x: number,
       y: number,
       w: number,
       h: number,
     ) {
-      if (!ssLoaded || !ssImg) return;
-      const sp = name.startsWith('block_')
-        ? BLOCK_SPRITES[name.slice(6)]
-        : SPRITES[name];
+      const sp = SPRITES[name];
       if (!sp) return;
-      ctx.drawImage(ssImg, sp.sx, sp.sy, sp.sw, sp.sh, x, y, w, h);
+      const color = skin.tint ? skin.tint[name] : null;
+      if (skin.glow && color) {
+        ctx.shadowBlur = skin.glow;
+        ctx.shadowColor = color;
+      }
+      blit(sp, x, y, w, h, color, `${skin.id}|${name}`);
+      ctx.shadowBlur = 0;
+    }
+
+    function drawBlock(block: Block) {
+      const frame = BLOCK_SPRITES[block.color];
+      if (!frame) return;
+      const inset = skin.blockInset;
+      const x = block.x + inset;
+      const y = block.y + inset;
+      const w = block.w - inset * 2;
+      const h = block.h - inset * 2;
+      const color = skin.tint ? skin.tint.blocks[block.color] : null;
+
+      if (skin.glow && color) {
+        ctx.shadowBlur = skin.glow;
+        ctx.shadowColor = color;
+      }
+      ctx.globalAlpha = skin.blockFillAlpha;
+      blit(frame, x, y, w, h, color, `${skin.id}|block|${block.color}`);
+      ctx.globalAlpha = 1;
+      if (skin.blockStroke && color) {
+        const off = skin.blockLineWidth / 2;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = skin.blockLineWidth;
+        ctx.strokeRect(
+          x + off,
+          y + off,
+          w - skin.blockLineWidth,
+          h - skin.blockLineWidth,
+        );
+      }
+      ctx.shadowBlur = 0;
+    }
+
+    function drawExplosion(exp: Explosion, frameIndex: number) {
+      const frames = EXPLOSION_FRAMES[exp.color];
+      if (!frames) return;
+      const color = skin.tint ? skin.tint.blocks[exp.color] : null;
+      if (skin.glow && color) {
+        ctx.shadowBlur = skin.glow;
+        ctx.shadowColor = color;
+      }
+      blit(
+        frames[frameIndex],
+        exp.x,
+        exp.y,
+        exp.w,
+        exp.h,
+        color,
+        `${skin.id}|boom|${exp.color}|${frameIndex}`,
+      );
+      ctx.shadowBlur = 0;
     }
 
     // ── Game state ───────────────────────────────────────────────────────────
@@ -407,44 +655,42 @@ export default function ArkanoidGame({
 
     // ── Draw ─────────────────────────────────────────────────────────────────
     function draw() {
-      ctx.fillStyle = '#000';
+      // One read per frame: every helper above sees the switch immediately,
+      // without the effect ever re-running.
+      skin = skinRef.current;
+
+      ctx.fillStyle = skin.bg;
       ctx.fillRect(0, 0, W, H);
 
-      for (const block of blocks)
-        if (block.alive)
-          drawSprite(
-            'block_' + block.color,
-            block.x,
-            block.y,
-            block.w,
-            block.h,
-          );
+      for (const block of blocks) if (block.alive) drawBlock(block);
 
       for (const exp of explosions) {
         const frameIndex = Math.min(
           Math.floor((exp.elapsed / EXPLOSION_DURATION) * 4),
           3,
         );
-        drawFrame(
-          EXPLOSION_FRAMES[exp.color][frameIndex],
-          exp.x,
-          exp.y,
-          exp.w,
-          exp.h,
-        );
+        drawExplosion(exp, frameIndex);
       }
 
       drawSprite('paddle', paddle.x, paddle.y, paddle.w, paddle.h);
       drawSprite('ball', ball.x, ball.y, ball.w, ball.h);
 
-      // Internal HUD (score top-left, level top-center, lives as sprites top-right)
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 18px monospace';
+      // Internal HUD (score top-left, level top-center, lives as sprites
+      // top-right). Its colors are part of the skin, not loose literals.
+      if (skin.glow) {
+        ctx.shadowBlur = skin.glow;
+        ctx.shadowColor = skin.hudScore;
+      }
+      ctx.fillStyle = skin.hudScore;
+      ctx.font = skin.hudFont;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
       ctx.fillText('Score: ' + score, 10, 10);
       ctx.textAlign = 'center';
+      if (skin.glow) ctx.shadowColor = skin.hudLevel;
+      ctx.fillStyle = skin.hudLevel;
       ctx.fillText('Nivel: ' + currentLevel, W / 2, 10);
+      ctx.shadowBlur = 0;
       const ballSize = 16;
       const ballSpacing = 4;
       for (let i = 0; i < lives; i++) {

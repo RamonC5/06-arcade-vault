@@ -1,14 +1,140 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { hexToRgba } from '@/lib/skins';
 
 interface SnakeGameProps {
   paused: boolean;
+  skinKey?: string;
   onScoreChange: (score: number) => void;
   onLevelChange: (level: number) => void;
   onLivesChange: (lives: number) => void;
   onGameOver: (finalScore: number) => void;
 }
+
+// ── Skins ─────────────────────────────────────────────────────────────────────
+
+/**
+ * A skin is palette *and* drawing technique. Besides the eight colors, it owns
+ * the shape knobs (corner radius, padding, tail alpha ramp) and `glow`, which
+ * drives `shadowBlur`. Everything the canvas paints — grid and in-canvas HUD
+ * included — comes from here; no color literal is left in `draw()`.
+ */
+type Skin = {
+  name: string;
+  /** Board background. Never perceptibly lighter than the site's `--bg`. */
+  bg: string;
+  grid: string;
+  gridAlpha: number;
+  gridWidth: number;
+  head: string;
+  body: string;
+  /** Eye dot, drawn on top of the head — read against `head`, never against `bg`. */
+  eye: string;
+  eyeRadius: number;
+  /** Translucent strip behind the in-canvas HUD text. */
+  hudBar: string;
+  hudBarAlpha: number;
+  hudScore: string;
+  hudLevel: string;
+  hudFont: string;
+  headPad: number;
+  bodyPad: number;
+  headRadius: number;
+  bodyRadius: number;
+  /** Alpha of the segment right behind the head. */
+  tailAlpha: number;
+  /** Alpha lost per segment towards the tail. */
+  tailFade: number;
+  /** Floor for the tail ramp, so the last segments stay legible. */
+  tailMinAlpha: number;
+  /** `shadowBlur` in px; 0 disables the glow entirely. */
+  glow: number;
+};
+
+const SKINS: Record<string, Skin> = {
+  // Literal freeze of the original palette: green snake on a dark green board.
+  // Every value here is one of the nine literals `draw()` used to hardcode, so
+  // the refactor is neutral to the pixel. If anything looks different, it's a bug.
+  clasico: {
+    name: 'Clásico',
+    bg: '#0a1a0a',
+    grid: '#00ff50',
+    gridAlpha: 0.06,
+    gridWidth: 1,
+    head: '#00ff50',
+    body: '#00cc40',
+    eye: '#001a00',
+    eyeRadius: 3.5,
+    hudBar: '#000000',
+    hudBarAlpha: 0.55,
+    hudScore: '#00ff80',
+    hudLevel: '#80ffcc',
+    hudFont: 'bold 14px monospace',
+    headPad: 2,
+    bodyPad: 4,
+    headRadius: 6,
+    bodyRadius: 4,
+    tailAlpha: 1,
+    tailFade: 0.03,
+    tailMinAlpha: 0.4,
+    glow: 0,
+  },
+  // Dual-phosphor arcade tube: amber snake over a dim green graticule. Hard
+  // corners, no glow and a uniform body (a phosphor tube has no alpha ramp).
+  // The graticule sits 74° of hue away from the snake so the two never blend.
+  retro: {
+    name: 'Retro',
+    bg: '#0a0703',
+    grid: '#4a6b43',
+    gridAlpha: 1,
+    gridWidth: 1,
+    head: '#ffdf9b',
+    body: '#d68e24',
+    eye: '#241703',
+    eyeRadius: 3.5,
+    hudBar: '#000000',
+    hudBarAlpha: 0.6,
+    hudScore: '#ffb000',
+    hudLevel: '#7fd06a',
+    hudFont: 'bold 14px monospace',
+    headPad: 2,
+    bodyPad: 3,
+    headRadius: 1,
+    bodyRadius: 0,
+    tailAlpha: 1,
+    tailFade: 0,
+    tailMinAlpha: 1,
+    glow: 0,
+  },
+  // Arcade Vault identity: house tokens with `shadowBlur`. Yellow head over a
+  // green body keeps the snake reading as a snake while putting 90° of hue
+  // between the two ends; the eyes are punched out in the board color.
+  neon: {
+    name: 'Neon',
+    bg: '#05050a',
+    grid: '#00f5ff',
+    gridAlpha: 0.42,
+    gridWidth: 1,
+    head: '#f5ff00',
+    body: '#00ff88',
+    eye: '#05050a',
+    eyeRadius: 3.5,
+    hudBar: '#000000',
+    hudBarAlpha: 0.6,
+    hudScore: '#00f5ff',
+    hudLevel: '#ff006e',
+    hudFont: 'bold 14px monospace',
+    headPad: 2,
+    bodyPad: 4,
+    headRadius: 8,
+    bodyRadius: 6,
+    tailAlpha: 0.85,
+    tailFade: 0.02,
+    tailMinAlpha: 0.7,
+    glow: 12,
+  },
+};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -103,6 +229,7 @@ function intervalMs(level: number): number {
 
 export default function SnakeGame({
   paused,
+  skinKey = 'clasico',
   onScoreChange,
   onLevelChange,
   onLivesChange,
@@ -110,17 +237,29 @@ export default function SnakeGame({
 }: SnakeGameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pausedRef = useRef(paused);
+  const skinRef = useRef<Skin>(SKINS[skinKey] ?? SKINS.clasico);
   const stateRef = useRef<GameState>(initialState());
   const prevScoreRef = useRef(0);
   const prevLevelRef = useRef(1);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const deadFiredRef = useRef(false);
+  // Set by the loop effect once the sprite sheet is ready, so a skin change can
+  // repaint immediately instead of waiting for the next tick.
+  const redrawRef = useRef<(() => void) | null>(null);
 
   // Sync paused ref so the loop reads the latest value without re-mounting.
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+
+  // Swapping the skin only repoints a ref: the loop effect never re-runs, so the
+  // snake, the score and the level all survive the change. The extra repaint
+  // makes the swap visible while paused or after game over, when no tick runs.
+  useEffect(() => {
+    skinRef.current = SKINS[skinKey] ?? SKINS.clasico;
+    redrawRef.current?.();
+  }, [skinKey]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -134,6 +273,7 @@ export default function SnakeGame({
 
     img.onload = () => {
       if (!alive) return;
+      redrawRef.current = draw;
       startLoop();
     };
     img.src = '/fruits.png';
@@ -141,15 +281,17 @@ export default function SnakeGame({
     // ── Draw ────────────────────────────────────────────────────────────────
     function draw() {
       const s = stateRef.current;
+      // Active skin, re-read once per frame: the loop effect never restarts.
+      const skin = skinRef.current;
       ctx.clearRect(0, 0, W, H);
 
       // Background
-      ctx.fillStyle = '#0a1a0a';
+      ctx.fillStyle = skin.bg;
       ctx.fillRect(0, 0, W, H);
 
       // Grid lines
-      ctx.strokeStyle = 'rgba(0,255,80,0.06)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = hexToRgba(skin.grid, skin.gridAlpha);
+      ctx.lineWidth = skin.gridWidth;
       for (let c = 0; c <= COLS; c++) {
         ctx.beginPath();
         ctx.moveTo(c * CELL, 0);
@@ -166,33 +308,42 @@ export default function SnakeGame({
       // Snake body
       s.snake.forEach((seg, i) => {
         const isHead = i === 0;
-        const alpha = isHead ? 1 : Math.max(0.4, 1 - i * 0.03);
+        const alpha = isHead
+          ? 1
+          : Math.max(skin.tailMinAlpha, skin.tailAlpha - i * skin.tailFade);
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = isHead ? '#00ff50' : '#00cc40';
-        const pad = isHead ? 2 : 4;
+        const color = isHead ? skin.head : skin.body;
+        ctx.fillStyle = color;
+        if (skin.glow) {
+          ctx.shadowBlur = skin.glow;
+          ctx.shadowColor = color;
+        }
+        const pad = isHead ? skin.headPad : skin.bodyPad;
         ctx.beginPath();
         ctx.roundRect(
           seg.x * CELL + pad,
           seg.y * CELL + pad,
           CELL - pad * 2,
           CELL - pad * 2,
-          isHead ? 6 : 4,
+          isHead ? skin.headRadius : skin.bodyRadius,
         );
         ctx.fill();
+        // Drop the glow before the eyes: a halo on a dark dot only smears it.
+        ctx.shadowBlur = 0;
 
         // Head eyes
         if (isHead) {
-          ctx.fillStyle = '#001a00';
+          ctx.fillStyle = skin.eye;
           const d = s.dir;
           const ex = seg.x * CELL + CELL / 2 + d.x * 8;
           const ey = seg.y * CELL + CELL / 2 + d.y * 8;
           const ox = d.y * 7;
           const oy = d.x * 7;
           ctx.beginPath();
-          ctx.arc(ex + ox, ey - oy, 3.5, 0, Math.PI * 2);
+          ctx.arc(ex + ox, ey - oy, skin.eyeRadius, 0, Math.PI * 2);
           ctx.fill();
           ctx.beginPath();
-          ctx.arc(ex - ox, ey + oy, 3.5, 0, Math.PI * 2);
+          ctx.arc(ex - ox, ey + oy, skin.eyeRadius, 0, Math.PI * 2);
           ctx.fill();
         }
       });
@@ -216,17 +367,17 @@ export default function SnakeGame({
       );
 
       // HUD overlay
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillStyle = hexToRgba(skin.hudBar, skin.hudBarAlpha);
       ctx.fillRect(0, 0, W, 38);
 
-      ctx.font = 'bold 14px monospace';
+      ctx.font = skin.hudFont;
       ctx.textBaseline = 'middle';
 
-      ctx.fillStyle = '#00ff80';
+      ctx.fillStyle = skin.hudScore;
       ctx.textAlign = 'left';
       ctx.fillText(`SCORE  ${String(s.score).padStart(6, '0')}`, 12, 19);
 
-      ctx.fillStyle = '#80ffcc';
+      ctx.fillStyle = skin.hudLevel;
       ctx.textAlign = 'right';
       ctx.fillText(`LEVEL  ${String(s.level).padStart(2, '0')}`, W - 12, 19);
 
@@ -348,6 +499,7 @@ export default function SnakeGame({
 
     return () => {
       alive = false;
+      redrawRef.current = null;
       clearInterval(intervalRef.current!);
       document.removeEventListener('keydown', handleKey);
     };
