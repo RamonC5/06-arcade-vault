@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { hexToRgba } from '@/lib/skins';
+import type { GameAction, GameInput } from '@/lib/gameInput';
 
 interface AsteroidsGameProps {
   paused: boolean;
@@ -10,6 +11,8 @@ interface AsteroidsGameProps {
   onLivesChange: (lives: number) => void;
   onLevelChange: (level: number) => void;
   onGameOver: (finalScore: number) => void;
+  /** Imperative handle for the touch controls; the keyboard path keeps working without it. */
+  inputRef?: RefObject<GameInput | null>;
 }
 
 /**
@@ -111,6 +114,7 @@ export default function AsteroidsGame({
   onLivesChange,
   onLevelChange,
   onGameOver,
+  inputRef,
 }: AsteroidsGameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -157,9 +161,19 @@ export default function AsteroidsGame({
     const keys: Record<string, boolean> = {};
     const justPressed: Record<string, boolean> = {};
 
+    // Shared by the keyboard handlers and the touch `GameInput` handle below,
+    // so both paths flip exactly the same key state.
+    function applyKey(code: string, down: boolean) {
+      if (down) {
+        justPressed[code] = !keys[code];
+        keys[code] = true;
+      } else {
+        keys[code] = false;
+      }
+    }
+
     function onKeyDown(e: KeyboardEvent) {
-      justPressed[e.code] = !keys[e.code];
-      keys[e.code] = true;
+      applyKey(e.code, true);
       if (
         ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(
           e.code,
@@ -168,11 +182,34 @@ export default function AsteroidsGame({
         e.preventDefault();
     }
     function onKeyUp(e: KeyboardEvent) {
-      keys[e.code] = false;
+      applyKey(e.code, false);
     }
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+
+    // Touch action -> keyboard code it stands in for. `fire` is a `tap`:
+    // TouchControls calls press()+release() back to back, which reproduces a
+    // keydown/keyup pair and lets `pressed('Space')` below fire exactly once.
+    const ACTION_CODES: Partial<Record<GameAction, string>> = {
+      left: 'ArrowLeft',
+      right: 'ArrowRight',
+      up: 'ArrowUp',
+      fire: 'Space',
+    };
+
+    if (inputRef) {
+      inputRef.current = {
+        press(action: GameAction) {
+          const code = ACTION_CODES[action];
+          if (code) applyKey(code, true);
+        },
+        release(action: GameAction) {
+          const code = ACTION_CODES[action];
+          if (code) applyKey(code, false);
+        },
+      };
+    }
 
     function pressed(code: string) {
       const val = justPressed[code];
@@ -645,7 +682,9 @@ export default function AsteroidsGame({
       cancelAnimationFrame(rafId);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      if (inputRef) inputRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

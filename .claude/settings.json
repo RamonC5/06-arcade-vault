@@ -6,7 +6,20 @@
       "Bash(npx next *)",
       "Bash(npm run *)",
       "Bash(grep -E \"play\\\\\\\\\\\\\\\\page.tsx$|Avoid calling setState\")",
-      "Bash(grep -E \"^C:.*\\(games|components\\).*\\\\.tsx$\")"
+      "Bash(grep -E \"^C:.*\\(games|components\\).*\\\\.tsx$\")",
+      "PowerShell(npm run build)",
+      "PowerShell(npm run lint)",
+      "Bash(cat /tmp/lint-before.txt | tail -80)",
+      "Read(//tmp/**)",
+      "Bash(rm -f /tmp/lint-before.txt /tmp/lint-after.txt)",
+      "Bash(rm -f /tmp/lint-step6.txt)",
+      "Bash(rm -f /tmp/lint-step7.txt)",
+      "Bash(rm -f /tmp/lint-step8.txt)",
+      "Bash(npx prettier *)",
+      "Bash(rm -f /tmp/lint-step10.txt)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
     ]
   },
   "hooks": {

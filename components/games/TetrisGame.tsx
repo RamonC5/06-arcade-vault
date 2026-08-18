@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
+import type { GameAction, GameInput } from '@/lib/gameInput';
 
 interface TetrisGameProps {
   paused: boolean;
@@ -9,6 +10,8 @@ interface TetrisGameProps {
   onLivesChange: (lives: number) => void;
   onLevelChange: (level: number) => void;
   onGameOver: (finalScore: number) => void;
+  /** Imperative handle for the touch controls; the keyboard path keeps working without it. */
+  inputRef?: RefObject<GameInput | null>;
 }
 
 type Skin = {
@@ -210,6 +213,7 @@ export default function TetrisGame({
   onLivesChange,
   onLevelChange,
   onGameOver,
+  inputRef,
 }: TetrisGameProps) {
   const boardRef = useRef<HTMLCanvasElement>(null);
   const nextRef = useRef<HTMLCanvasElement>(null);
@@ -481,9 +485,10 @@ export default function TetrisGame({
       spawn();
     }
 
-    function onKeyDown(e: KeyboardEvent) {
+    // Shared by the keyboard handler and the touch `GameInput` handle below.
+    function doAction(code: string) {
       if (pausedRef.current || gameOver) return;
-      switch (e.code) {
+      switch (code) {
         case 'ArrowLeft':
           if (!collide(current.shape, current.x - 1, current.y)) current.x--;
           break;
@@ -498,10 +503,35 @@ export default function TetrisGame({
           tryRotate();
           break;
         case 'Space':
-          e.preventDefault();
           hardDrop();
           break;
       }
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code === 'Space') e.preventDefault();
+      doAction(e.code);
+    }
+
+    // Touch action -> keyboard code it stands in for. `left`/`down`/`right` are
+    // `repeat`: TouchControls calls press() on an interval, and each call moves
+    // the piece exactly one step, the same as OS key-repeat would.
+    const ACTION_CODES: Partial<Record<GameAction, string>> = {
+      left: 'ArrowLeft',
+      right: 'ArrowRight',
+      down: 'ArrowDown',
+      rotate: 'ArrowUp',
+      drop: 'Space',
+    };
+
+    if (inputRef) {
+      inputRef.current = {
+        press(action: GameAction) {
+          const code = ACTION_CODES[action];
+          if (code) doAction(code);
+        },
+        release() {},
+      };
     }
 
     function loop(ts: number) {
@@ -546,20 +576,20 @@ export default function TetrisGame({
     return () => {
       cancelAnimationFrame(animId);
       document.removeEventListener('keydown', onKeyDown);
+      if (inputRef) inputRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        gap: 12,
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-      }}
-    >
-      <canvas ref={boardRef} width={300} height={600} />
-      <canvas ref={nextRef} width={120} height={120} />
+    <div className="tetris-stage">
+      <canvas
+        ref={boardRef}
+        width={300}
+        height={600}
+        className="tetris-board"
+      />
+      <canvas ref={nextRef} width={120} height={120} className="tetris-next" />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
+import type { GameAction, GameInput } from '@/lib/gameInput';
 
 interface ArkanoidGameProps {
   paused: boolean;
@@ -9,6 +10,8 @@ interface ArkanoidGameProps {
   onLivesChange: (lives: number) => void;
   onLevelChange: (level: number) => void;
   onGameOver: (finalScore: number) => void;
+  /** Imperative handle for the touch controls; the keyboard path keeps working without it. */
+  inputRef?: RefObject<GameInput | null>;
 }
 
 // ── Skins ─────────────────────────────────────────────────────────────────────
@@ -307,6 +310,7 @@ export default function ArkanoidGame({
   onLivesChange,
   onLevelChange,
   onGameOver,
+  inputRef,
 }: ArkanoidGameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pausedRef = useRef(paused);
@@ -715,13 +719,36 @@ export default function ArkanoidGame({
     }
 
     // ── Event handlers ────────────────────────────────────────────────────────
+    // Shared by the keyboard handlers and the touch `GameInput` handle below.
+    function applyKey(key: string, down: boolean) {
+      if (key in keys) keys[key] = down;
+    }
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key in keys) keys[e.key] = true;
+      applyKey(e.key, true);
       // P / Escape intentionally NOT handled — platform controls pause
     }
     function onKeyUp(e: KeyboardEvent) {
-      if (e.key in keys) keys[e.key] = false;
+      applyKey(e.key, false);
     }
+
+    const ACTION_KEYS: Partial<Record<GameAction, string>> = {
+      left: 'ArrowLeft',
+      right: 'ArrowRight',
+    };
+
+    if (inputRef) {
+      inputRef.current = {
+        press(action: GameAction) {
+          const key = ACTION_KEYS[action];
+          if (key) applyKey(key, true);
+        },
+        release(action: GameAction) {
+          const key = ACTION_KEYS[action];
+          if (key) applyKey(key, false);
+        },
+      };
+    }
+
     function onMouseMove(e: MouseEvent) {
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
@@ -761,8 +788,9 @@ export default function ArkanoidGame({
       document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('keyup', onKeyUp);
       canvas.removeEventListener('mousemove', onMouseMove);
+      if (inputRef) inputRef.current = null;
     };
-  }, [onScoreChange, onLivesChange, onLevelChange, onGameOver]);
+  }, [onScoreChange, onLivesChange, onLevelChange, onGameOver, inputRef]);
 
   return (
     <canvas
