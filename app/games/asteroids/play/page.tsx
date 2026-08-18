@@ -2,11 +2,24 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useState, useCallback, useEffect } from 'react';
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type CSSProperties,
+} from 'react';
 import { useUser } from '@/app/context/UserContext';
 import { createClient } from '@/lib/supabase/client';
 import SkinPicker from '@/components/SkinPicker';
 import { getSavedSkin, saveSkin } from '@/lib/skins';
+import TouchControls from '@/components/TouchControls';
+import {
+  useCoarsePointer,
+  type GameInput,
+  type TouchLayout,
+} from '@/lib/gameInput';
+import { useFullscreen } from '@/lib/useFullscreen';
 
 const AsteroidsGame = dynamic(
   () => import('@/components/games/AsteroidsGame'),
@@ -15,6 +28,19 @@ const AsteroidsGame = dynamic(
 
 const GAME_ID = 'asteroids';
 const SKIN_OPTIONS = ['clasico', 'retro', 'neon'];
+
+const TOUCH_LAYOUT: TouchLayout = {
+  dpad: [
+    { action: 'left', label: '◀', mode: 'hold' },
+    { action: 'right', label: '▶', mode: 'hold' },
+  ],
+  actions: [
+    { action: 'up', label: 'IMPULSO', mode: 'hold' },
+    { action: 'fire', label: 'FUEGO', mode: 'tap' },
+  ],
+};
+
+const CRT_STYLE = { '--crt-ratio': '4 / 3' } as CSSProperties;
 
 export default function AsteroidsPlay() {
   const { user } = useUser();
@@ -28,6 +54,15 @@ export default function AsteroidsPlay() {
   const [saved, setSaved] = useState(false);
   const [gameKey, setGameKey] = useState(0);
   const [skinKey, setSkinKey] = useState('clasico');
+  const inputRef = useRef<GameInput | null>(null);
+  const coarsePointer = useCoarsePointer();
+  const { ref: stageRef, active: fsActive, toggle: toggleFs } = useFullscreen();
+  // Mirrors `fsActive` so `handleGameOver` can read it without depending on
+  // it — that callback's identity must stay stable across renders.
+  const fsActiveRef = useRef(fsActive);
+  useEffect(() => {
+    fsActiveRef.current = fsActive;
+  }, [fsActive]);
 
   // Read the stored skin after mount, never in the useState initializer, so the
   // first client render matches the server HTML.
@@ -38,10 +73,16 @@ export default function AsteroidsPlay() {
   const handleScoreChange = useCallback((s: number) => setScore(s), []);
   const handleLivesChange = useCallback((l: number) => setLives(l), []);
   const handleLevelChange = useCallback((l: number) => setLevel(l), []);
-  const handleGameOver = useCallback((finalScore: number) => {
-    setScore(finalScore);
-    setOver(true);
-  }, []);
+  const handleGameOver = useCallback(
+    (finalScore: number) => {
+      setScore(finalScore);
+      setOver(true);
+      // The game-over modal renders outside the fullscreen element, so leave
+      // fullscreen first or it would stay invisible behind it.
+      if (fsActiveRef.current) toggleFs();
+    },
+    [toggleFs],
+  );
 
   useEffect(() => {
     if (over) {
@@ -100,6 +141,9 @@ export default function AsteroidsPlay() {
           <button className="btn yellow" onClick={() => setPaused((p) => !p)}>
             {paused ? 'REANUDAR' : 'PAUSA'}
           </button>
+          <button className="btn cyan" onClick={toggleFs}>
+            {fsActive ? 'SALIR PANTALLA COMPLETA' : 'PANTALLA COMPLETA'}
+          </button>
           <button className="btn magenta" onClick={() => setOver(true)}>
             FIN
           </button>
@@ -109,46 +153,60 @@ export default function AsteroidsPlay() {
         </div>
       </div>
 
-      <div className="crt">
-        <div className="crt-screen">
-          <AsteroidsGame
-            key={gameKey}
-            paused={paused}
-            skinKey={skinKey}
-            onScoreChange={handleScoreChange}
-            onLivesChange={handleLivesChange}
-            onLevelChange={handleLevelChange}
-            onGameOver={handleGameOver}
-          />
-          {paused && (
-            <div
-              className="crt-content"
-              style={{ background: 'rgba(0,0,0,0.6)', zIndex: 5 }}
-            >
-              <div>
-                <div className="pixel neon-yellow" style={{ fontSize: 22 }}>
-                  EN PAUSA
-                </div>
-                <div
-                  className="mono"
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--ink-dim)',
-                    marginTop: 10,
-                    letterSpacing: '0.16em',
-                  }}
-                >
-                  PULSA REANUDAR PARA CONTINUAR
+      <div
+        ref={stageRef}
+        className={`av-stage${fsActive ? ' av-stage-fs' : ''}`}
+      >
+        <div className="crt" style={CRT_STYLE}>
+          <div className="crt-screen">
+            <AsteroidsGame
+              key={gameKey}
+              paused={paused}
+              skinKey={skinKey}
+              onScoreChange={handleScoreChange}
+              onLivesChange={handleLivesChange}
+              onLevelChange={handleLevelChange}
+              onGameOver={handleGameOver}
+              inputRef={inputRef}
+            />
+            {paused && (
+              <div
+                className="crt-content"
+                style={{ background: 'rgba(0,0,0,0.6)', zIndex: 5 }}
+              >
+                <div>
+                  <div className="pixel neon-yellow" style={{ fontSize: 22 }}>
+                    EN PAUSA
+                  </div>
+                  <div
+                    className="mono"
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--ink-dim)',
+                      marginTop: 10,
+                      letterSpacing: '0.16em',
+                    }}
+                  >
+                    PULSA REANUDAR PARA CONTINUAR
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
+          <div className="crt-bottom">
+            <span className="led">SEÑAL OK</span>
+            <span>ASTEROIDS · CRT-83 · 60 HZ</span>
+            <span>CARGA · 1MB</span>
+          </div>
         </div>
-        <div className="crt-bottom">
-          <span className="led">SEÑAL OK</span>
-          <span>ASTEROIDS · CRT-83 · 60 HZ</span>
-          <span>CARGA · 1MB</span>
-        </div>
+
+        {coarsePointer && (
+          <TouchControls
+            layout={TOUCH_LAYOUT}
+            inputRef={inputRef}
+            disabled={paused || over}
+          />
+        )}
       </div>
 
       {over && (

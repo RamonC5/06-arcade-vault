@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { hexToRgba } from '@/lib/skins';
+import type { GameAction, GameInput } from '@/lib/gameInput';
 
 interface SnakeGameProps {
   paused: boolean;
@@ -10,6 +11,8 @@ interface SnakeGameProps {
   onLevelChange: (level: number) => void;
   onLivesChange: (lives: number) => void;
   onGameOver: (finalScore: number) => void;
+  /** Imperative handle for the touch controls; the keyboard path keeps working without it. */
+  inputRef?: RefObject<GameInput | null>;
 }
 
 // ── Skins ─────────────────────────────────────────────────────────────────────
@@ -234,6 +237,7 @@ export default function SnakeGame({
   onLevelChange,
   onLivesChange,
   onGameOver,
+  inputRef,
 }: SnakeGameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pausedRef = useRef(paused);
@@ -473,10 +477,17 @@ export default function SnakeGame({
       );
     }
 
-    // ── Keyboard ────────────────────────────────────────────────────────────
-    function handleKey(e: KeyboardEvent) {
+    // ── Direction ───────────────────────────────────────────────────────────
+    // Shared by the keyboard handler and the touch `GameInput` handle below.
+    function setDirection(dx: number, dy: number) {
       const s = stateRef.current;
       const cur = s.dir;
+      // Ignore 180° reversal
+      if (dx === -cur.x && dy === -cur.y) return;
+      s.nextDir = { x: dx, y: dy };
+    }
+
+    function handleKey(e: KeyboardEvent) {
       const map: Record<string, Point> = {
         arrowup: { x: 0, y: -1 },
         w: { x: 0, y: -1 },
@@ -490,18 +501,36 @@ export default function SnakeGame({
       const next = map[e.key.toLowerCase()];
       if (!next) return;
       e.preventDefault();
-      // Ignore 180° reversal
-      if (next.x === -cur.x && next.y === -cur.y) return;
-      s.nextDir = next;
+      setDirection(next.x, next.y);
     }
 
     document.addEventListener('keydown', handleKey);
+
+    // Touch action -> direction vector. Every Snake action is a discrete tap,
+    // so `release` is a no-op — the direction is already committed on press.
+    const ACTION_DIRS: Partial<Record<GameAction, Point>> = {
+      up: { x: 0, y: -1 },
+      down: { x: 0, y: 1 },
+      left: { x: -1, y: 0 },
+      right: { x: 1, y: 0 },
+    };
+
+    if (inputRef) {
+      inputRef.current = {
+        press(action: GameAction) {
+          const dir = ACTION_DIRS[action];
+          if (dir) setDirection(dir.x, dir.y);
+        },
+        release() {},
+      };
+    }
 
     return () => {
       alive = false;
       redrawRef.current = null;
       clearInterval(intervalRef.current!);
       document.removeEventListener('keydown', handleKey);
+      if (inputRef) inputRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

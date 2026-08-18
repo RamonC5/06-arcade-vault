@@ -96,6 +96,8 @@ interface GameProps {
   onLivesChange: (lives: number) => void;
   onLevelChange: (level: number) => void;
   onGameOver: (finalScore: number) => void;
+  /** Imperative handle for the touch controls; optional, so keyboard-only games keep compiling. */
+  inputRef?: React.RefObject<GameInput | null>;
 }
 ```
 
@@ -106,10 +108,11 @@ Conventions to preserve when adding one:
 - The canvas keeps its internal HUD but must not draw its own GAME OVER overlay — the React modal replaces it.
 - On save, the page inserts into `scores` from the browser client and persists the player name in `localStorage` under `av_player_name`.
 - Skins: the component takes `skinKey?: string` defaulting to `'clasico'` and offers at least `clasico` / `retro` / `neon`, applied through a `skinRef` so switching skin never restarts the run. `clasico` must be a literal freeze of the game's original colors. See `components/games/TetrisGame.tsx` for the canonical `type Skin` / `SKINS` pattern, and the `skin-designer` agent to add them.
+- Touch controls: the keyboard (and mouse, for Arkanoid) handler shares its input logic with a small internal function (`applyKey`, `doAction`, `setDirection`, …) that the component also calls from the `GameInput` handle it publishes on `inputRef.current`, matching a `TOUCH_LAYOUT` declared in the play page and rendered by `<TouchControls>` from `lib/gameInput.ts` / `components/TouchControls.tsx`. Never wire touch input through synthetic keyboard events. See `components/games/AsteroidsGame.tsx` for the reference implementation, and `references/games-with-touch.md` for which games have it.
 
 `references/started-games/` holds the original standalone HTML/JS versions used as the source for ports, and `references/source-assets/` the sprite sheets; runtime assets are copied into `public/`. `references/templates/` keeps the original design prototypes.
 
-Three hand-maintained ledgers live in `references/`: `implemented-games.md` (what is built and live in `games`), `game-suggestions-todo.md` (the `game-planner` agent's memory — every game ever proposed, with its state and the reasoning of each round) and `games-with-themes.md` (the `skin-designer` agent's ledger — which games have skins and which ones). Keep `implemented-games.md` in sync when a game ships, and add the new game to `games-with-themes.md` as `Sin skins`.
+Four hand-maintained ledgers live in `references/`: `implemented-games.md` (what is built and live in `games`), `game-suggestions-todo.md` (the `game-planner` agent's memory — every game ever proposed, with its state and the reasoning of each round), `games-with-themes.md` (the `skin-designer` agent's ledger — which games have skins and which ones) and `games-with-touch.md` (which games have touch controls and their `TOUCH_LAYOUT`). Keep `implemented-games.md` in sync when a game ships, and add the new game to `games-with-themes.md` as `Sin skins` and to `games-with-touch.md` as `Sin controles táctiles`.
 
 ### Auth
 

@@ -1045,6 +1045,8 @@ a {
     0 0 0 7px #2a2a35,
     0 30px 80px -20px rgba(0, 245, 255, 0.35);
   overflow: hidden;
+  touch-action: none;
+  user-select: none;
 }
 .crt::before {
   content: '';
@@ -1059,7 +1061,7 @@ a {
 }
 .crt-screen {
   position: relative;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: var(--crt-ratio, 4 / 3);
   background: #000;
   border-radius: 12px / 28px;
   overflow: hidden;
@@ -1124,6 +1126,231 @@ a {
   border-radius: 50%;
   background: var(--green);
   box-shadow: 0 0 6px var(--green);
+}
+
+/* ===== touch controls ===== */
+.touch-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 18px;
+  touch-action: none;
+  user-select: none;
+}
+.touch-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 56px);
+  grid-template-rows: repeat(2, 56px);
+  grid-template-areas:
+    '.    up    .'
+    'left down right';
+  gap: 8px;
+}
+.touch-dpad [data-action='up'] {
+  grid-area: up;
+}
+.touch-dpad [data-action='left'] {
+  grid-area: left;
+}
+.touch-dpad [data-action='down'] {
+  grid-area: down;
+}
+.touch-dpad [data-action='right'] {
+  grid-area: right;
+}
+.touch-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.touch-btn {
+  position: relative;
+  min-width: 56px;
+  min-height: 56px;
+  padding: 6px 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  color: var(--cyan);
+  background: var(--bg-2);
+  border: 1px solid var(--cyan);
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 transparent;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 80ms ease,
+    box-shadow 120ms ease,
+    background 120ms ease;
+}
+.touch-btn:active {
+  background: rgba(0, 245, 255, 0.18);
+  box-shadow:
+    0 0 14px rgba(0, 245, 255, 0.55),
+    inset 0 0 10px rgba(0, 245, 255, 0.35);
+  transform: scale(0.94);
+}
+.touch-btn:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* ===== tetris: two responsive canvases ===== */
+/* Board keeps its native 1:2 shape; on a coarse pointer the stage flips to a
+   column and the next-piece preview moves above the board via
+   `column-reverse`, without touching DOM order. */
+.crt-tetris {
+  --crt-ratio: 3 / 4;
+}
+.tetris-stage {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+}
+.tetris-board {
+  display: block;
+  height: 100%;
+  width: auto;
+  min-height: 0;
+  min-width: 0;
+  aspect-ratio: 1 / 2;
+}
+.tetris-next {
+  display: block;
+  flex: 0 0 auto;
+  height: 20%;
+  width: auto;
+  min-height: 0;
+  min-width: 0;
+  aspect-ratio: 1 / 1;
+}
+@media (pointer: coarse) {
+  .crt-tetris {
+    --crt-ratio: 1 / 2;
+  }
+  .tetris-stage {
+    flex-direction: column-reverse;
+  }
+  .tetris-board {
+    height: auto;
+    width: 100%;
+    flex: 1 1 auto;
+  }
+  .tetris-next {
+    height: auto;
+    width: 26%;
+    max-width: 140px;
+  }
+}
+
+/* ===== fullscreen stage ===== */
+/* `.av-stage-fs` is the CSS fallback for browsers without `requestFullscreen`
+   (Safari on iPhone); native fullscreen renders in the browser's own top
+   layer and does not need it, but the class is harmless there too. */
+.av-stage {
+  display: block;
+}
+.av-stage-fs {
+  position: fixed;
+  inset: 0;
+  /* Below `.modal-bd` (80): the game-over modal must win any brief overlap
+     while the CSS-fallback path is exiting. */
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+  background: var(--bg);
+  overflow: auto;
+}
+.av-stage-fs .crt {
+  width: 100%;
+  max-width: 1100px;
+  max-height: 100%;
+}
+
+/* ===== mobile touch layout ===== */
+/* `.av-player` becomes a height-bounded column: the HUD and the botonera keep
+   their natural height, and `.crt` — via `flex: 1 1 auto` plus its own
+   `aspect-ratio` — absorbs whatever height is left and derives its width from
+   it, the same technique used for the Tetris canvases above. That is what
+   keeps the page from ever needing a vertical scrollbar, regardless of how
+   tall the HUD ends up being on a given device. */
+@media (pointer: coarse) and (max-width: 720px) {
+  .av-player {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    max-width: 100%;
+    margin: 0;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+    gap: 8px;
+    overflow: hidden;
+  }
+  .player-hud {
+    padding: 8px 10px;
+    gap: 8px;
+    margin-bottom: 0;
+    flex: 0 0 auto;
+  }
+  .hud-stat .l {
+    font-size: 8px;
+  }
+  .hud-stat .v {
+    font-size: 13px;
+  }
+  .hud-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .hud-actions .btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+    padding: 8px 10px;
+    font-size: 9px;
+  }
+  .av-stage {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .crt {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+    padding: 12px;
+    aspect-ratio: var(--crt-ratio, 4 / 3);
+  }
+  .crt-bottom {
+    margin-top: 8px;
+  }
+  .touch-controls {
+    flex: 0 0 auto;
+    margin-top: 0;
+    width: 100%;
+  }
 }
 
 /* fake in-screen game */
